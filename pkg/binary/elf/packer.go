@@ -113,9 +113,13 @@ func NewPacker(input, output string, funcs []string, addrSpecs []AddrSpec, verbo
 
 // FindFunction 在 ELF 中查找函数
 func (p *Packer) FindFunction(f *elf.File, name string) (*vm.FuncInfo, error) {
+	// 优先使用静态符号表，失败则 fallback 到动态符号表（支持 stripped .so）
 	syms, err := f.Symbols()
 	if err != nil {
-		return nil, fmt.Errorf("reading symbol table failed: %v", err)
+		syms, err = f.DynamicSymbols()
+		if err != nil {
+			return nil, fmt.Errorf("reading symbol table failed: %v", err)
+		}
 	}
 	for _, sym := range syms {
 		if sym.Name == name && elf.ST_TYPE(sym.Info) == elf.STT_FUNC {
