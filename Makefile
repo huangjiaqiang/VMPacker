@@ -9,11 +9,17 @@
 # ============================================================
 
 # 交叉编译工具链
-CROSS   ?= aarch64-linux-gnu-
-CC       = $(CROSS)gcc
-LD       = $(CROSS)ld
-OBJCOPY  = $(CROSS)objcopy
-GO       = go
+# CROSS_ARM32: 支持 arm-linux-gnueabihf- (Linux) 或 armv7-unknown-linux-gnueabihf- (macOS messense)
+# macOS 可用: make stub32 CROSS_ARM32=scripts/toolchains/armv7-unknown-linux-gnueabihf/bin/armv7-unknown-linux-gnueabihf-
+CROSS       ?= aarch64-linux-gnu-
+CROSS_ARM32 ?= arm-linux-gnueabihf-
+CC           = $(CROSS)gcc
+LD           = $(CROSS)ld
+OBJCOPY      = $(CROSS)objcopy
+CC_ARM32     = $(CROSS_ARM32)gcc
+LD_ARM32     = $(CROSS_ARM32)ld
+OBJCOPY_ARM32= $(CROSS_ARM32)objcopy
+GO           = go
 
 # 目录
 STUB_DIR   = stub
@@ -21,12 +27,22 @@ CMD_DIR    = cmd/vmpacker
 DEMO_DIR   = demo
 BUILD_DIR  = build
 
-# ------ VM 解释器 blob ------
+# ------ VM 解释器 blob (ARM64) ------
 STUB_SRC   = $(STUB_DIR)/vm_interp_clean.c
 STUB_LDS   = $(STUB_DIR)/vm_interp.lds
 STUB_O     = $(BUILD_DIR)/stub/vm_interp.o
 STUB_ELF   = $(BUILD_DIR)/stub/vm_interp.elf
 STUB_BIN   = $(CMD_DIR)/vm_interp.bin
+
+# ------ VM 解释器 blob (ARM32) ------
+STUB32_DIR   = $(STUB_DIR)/arm32
+STUB32_SRC   = $(STUB32_DIR)/vm_interp_arm32.c
+STUB32_ASM   = $(STUB32_DIR)/token_table_va.S
+STUB32_LDS   = $(STUB32_DIR)/vm_interp_arm32.lds
+STUB32_O     = $(BUILD_DIR)/stub/vm_interp_arm32.o
+STUB32_VA_O  = $(BUILD_DIR)/stub/token_table_va.o
+STUB32_ELF   = $(BUILD_DIR)/stub/vm_interp_arm32.elf
+STUB32_BIN   = $(CMD_DIR)/vm_interp_arm32.bin
 
 # ------ Go packer ------
 PACKER     = $(BUILD_DIR)/vmpacker.exe
@@ -35,21 +51,28 @@ PACKER     = $(BUILD_DIR)/vmpacker.exe
 DEMO_LICENSE     = $(BUILD_DIR)/demo_license
 DEMO_SIMPLE      = $(BUILD_DIR)/demo_simple
 
-# 编译选项 (必须 -mcmodel=tiny，禁止 -fPIC)
+# 编译选项 (ARM64: 必须 -mcmodel=tiny，禁止 -fPIC)
 STUB_CFLAGS = -c -Os -mcmodel=tiny -fno-stack-protector \
               -fno-builtin -nostdlib -march=armv8-a \
               -DVM_INDIRECT_DISPATCH -DVM_FUNC_SPLIT -DVM_TOKEN_ENTRY
 
+# 编译选项 (ARM32: -march=armv7-a -mthumb-interwork for Thumb mode support)
+STUB32_CFLAGS = -c -Os -fno-stack-protector \
+                -fno-builtin -nostdlib \
+                -march=armv7-a -mthumb-interwork -mfloat-abi=soft \
+                -DVM_INDIRECT_DISPATCH -DVM_FUNC_SPLIT -DVM_TOKEN_ENTRY
+
+
 DEMO_CFLAGS = -static -O0 -march=armv8-a
 
 # ============================================================
-.PHONY: all stub packer demo test clean help gui sync-public
+.PHONY: all stub stub32 packer demo test clean help gui sync-public
 
-all: stub packer
+all: stub stub32 packer
 	@echo ""
 	@echo "[+] Build complete: $(BUILD_DIR)/"
 
-# ------ VM 解释器 blob ------
+# ------ VM 解释器 blob (ARM64) ------
 stub: $(STUB_BIN)
 
 $(STUB_O): $(STUB_SRC) | $(BUILD_DIR)/stub
@@ -79,8 +102,34 @@ $(STUB_BIN): $(STUB_ELF) | $(BUILD_DIR)
 	"
 	@copy /Y "$(subst /,\,$(STUB_BIN))" "$(subst /,\,$(BUILD_DIR))\vm_interp.bin" > nul
 
-# ------ Go packer (embed vm_interp.bin) ------
-packer: $(STUB_BIN) | $(BUILD_DIR)
+# ------ VM 解释器 blob (ARM32) ------
+stub32: $(STUB32_BIN)
+
+$(STUB32_O): $(STUB32_SRC) | $(BUILD_DIR)/stub
+	$(CC_ARM32) $(STUB32_CFLAGS) -I$(STUB_DIR) $< -o $@
+
+$(STUB32_VA_O): $(STUB32_ASM) | $(BUILD_DIR)/stub
+	$(CC_ARM32) -c -march=armv7-a -mthumb-interwork $< -o $@
+
+$(STUB32_ELF): $(STUB32_O) $(STUB32_VA_O) $(STUB32_LDS)
+	$(LD_ARM32) -T $(STUB32_LDS) -o $@ $(STUB32_O) $(STUB32_VA_O)
+
+$(STUB32_BIN): $(STUB32_ELF) | $(BUILD_DIR)
+	$(OBJCOPY_ARM32) -O binary $< $(BUILD_DIR)/vm_interp_arm32_raw.bin
+	@if command -v powershell >/dev/null 2>&1; then \
+		powershell -Command "$$nmOut = & '$(CROSS_ARM32)nm' '$<'; $$l1 = $$nmOut | Select-String '\bvm_entry$$'; $$l2 = $$nmOut | Select-String '\bvm_entry_token$$'; $$l3 = $$nmOut | Select-String '\b_token_table_va$$'; if (!$$l1) { Write-Error 'vm_entry not found'; exit 1 }; if (!$$l2) { Write-Error 'vm_entry_token not found'; exit 1 }; if (!$$l3) { Write-Error '_token_table_va not found'; exit 1 }; $$off1 = [Convert]::ToUInt32($$l1.ToString().Split(' ')[0], 16); $$off2 = [Convert]::ToUInt32($$l2.ToString().Split(' ')[0], 16); $$off3 = [Convert]::ToUInt32($$l3.ToString().Split(' ')[0], 16); $$hdr = [BitConverter]::GetBytes([UInt32]$$off1) + [BitConverter]::GetBytes([UInt32]$$off2) + [BitConverter]::GetBytes([UInt32]$$off3); $$raw = [IO.File]::ReadAllBytes('$(BUILD_DIR)/vm_interp_arm32_raw.bin'); $$blob = $$hdr + $$raw; [IO.File]::WriteAllBytes('$(STUB32_BIN)', $$blob); Write-Host ('[+] vm_interp_arm32.bin: ' + $$blob.Length + ' bytes')"; \
+	else \
+		chmod +x scripts/build_stub32_unix.sh 2>/dev/null; \
+		./scripts/build_stub32_unix.sh '$<' '$(BUILD_DIR)/vm_interp_arm32_raw.bin' '$(STUB32_BIN)' '$(CROSS_ARM32)nm'; \
+	fi
+	@cp -f $(STUB32_BIN) $(BUILD_DIR)/vm_interp_arm32.bin 2>/dev/null || true
+
+# stub32-sync: 将已生成的 stub32 复制到 vmp-gui (无需重新编译)
+stub32-sync:
+	@if [ -f $(STUB32_BIN) ]; then cp -f $(STUB32_BIN) vmp-gui/backend/api/vm_interp_arm32.bin; echo "[+] Synced"; else echo "Run 'make stub32' or 'make stub32-clang' first"; exit 1; fi
+
+# ------ Go packer (embed vm_interp.bin + vm_interp_arm32.bin) ------
+packer: $(STUB_BIN) $(STUB32_BIN) | $(BUILD_DIR)
 	@powershell -Command "if (Test-Path '$(PACKER)') { Remove-Item -Force '$(PACKER)' -ErrorAction SilentlyContinue }"
 	$(GO) build -o $(PACKER) ./$(CMD_DIR)/
 	@echo "[+] packer: $(PACKER)"
@@ -102,20 +151,22 @@ test:
 
 # ------ 目录创建 ------
 $(BUILD_DIR):
-	@powershell -Command "New-Item -ItemType Directory -Force -Path '$(BUILD_DIR)' | Out-Null"
+	@mkdir -p $(BUILD_DIR)
 
 $(BUILD_DIR)/stub: | $(BUILD_DIR)
-	@powershell -Command "New-Item -ItemType Directory -Force -Path '$(BUILD_DIR)/stub' | Out-Null"
+	@mkdir -p $(BUILD_DIR)/stub
 
 # ------ 清理 ------
 clean:
-	@powershell -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$(BUILD_DIR)', '$(STUB_BIN)'"
+	@powershell -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$(BUILD_DIR)', '$(STUB_BIN)', '$(STUB32_BIN)'"
 	@echo "[+] cleaned"
 
 # ------ 帮助 ------
 help:
-	@echo "make all     - 编译 stub + packer (输出到 build/)"
-	@echo "make stub    - 仅编译 VM 解释器 blob"
+	@echo "make all     - 编译 stub (ARM64+ARM32) + packer (输出到 build/)"
+	@echo "make stub    - 仅编译 ARM64 VM 解释器 blob"
+	@echo "make stub32  - 仅编译 ARM32 VM 解释器 blob (需 arm-linux-gnueabihf-gcc)"
+	@echo "               macOS: 用 scripts/build_stub32_docker.sh 或 Linux/Windows 构建"
 	@echo "make packer  - 编译 Go packer (自动嵌入 blob)"
 	@echo "make gui     - 编译 GUI 版本 + NSIS 安装包"
 	@echo "make demo    - 交叉编译 demo 程序"
@@ -126,8 +177,9 @@ help:
 # ------ GUI 版本 (Wails + NSIS) ------
 GUI_DIR = vmp-gui
 
-gui: stub
+gui: stub stub32
 	@copy /Y "$(subst /,\,$(STUB_BIN))" "$(subst /,\,$(GUI_DIR))\backend\api\vm_interp.bin" > nul
+	@copy /Y "$(subst /,\,$(STUB32_BIN))" "$(subst /,\,$(GUI_DIR))\backend\api\vm_interp_arm32.bin" > nul
 	@powershell -Command "$$env:PATH = 'C:\Program Files (x86)\NSIS;' + $$env:PATH; cd '$(GUI_DIR)'; wails build -nsis"
 	@echo "[+] GUI installer: $(GUI_DIR)/build/bin/"
 

@@ -19,6 +19,9 @@ import (
 //go:embed vm_interp.bin
 var interpBlob []byte
 
+//go:embed vm_interp_arm32.bin
+var interpBlobARM32 []byte
+
 // VMPEngine API Interface for Frontend
 type VMPEngine struct {
 	ctx     context.Context
@@ -71,27 +74,31 @@ func (e *VMPEngine) SelectSaveFile(defaultFilename string) (string, error) {
 	return selection, nil
 }
 
-// AnalyzeELF reads binary information, verifying ARM64 format and extracting functions
+// AnalyzeELF reads binary information, verifying ARM64/ARM32 format and extracting functions
 func (e *VMPEngine) AnalyzeELF(filePath string) (map[string]interface{}, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	fileName := filepath.Base(filePath)
 
-	// Open the file as an ELF
 	f, err := elf.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open ELF file: %v", err)
 	}
 	defer f.Close()
 
-	if f.Machine != elf.EM_AARCH64 {
-		return nil, fmt.Errorf("unsupported architecture: only ARM64 is supported")
+	var archName string
+	switch {
+	case f.Machine == elf.EM_AARCH64 && f.Class == elf.ELFCLASS64:
+		archName = "ARM64"
+	case f.Machine == elf.EM_ARM && f.Class == elf.ELFCLASS32:
+		archName = "ARM32"
+	default:
+		return nil, fmt.Errorf("unsupported architecture: %s/%s (need ARM64 or ARM32)", f.Machine, f.Class)
 	}
 
 	syms, err := f.Symbols()
 	if err != nil {
-		// Fallback to dynamic symbols for stripped binaries
 		syms, err = f.DynamicSymbols()
 		if err != nil {
 			return nil, fmt.Errorf("无法读取符号表或动态符号表: %v。可能不支持被完全抹除符号的程序", err)
@@ -103,28 +110,35 @@ func (e *VMPEngine) AnalyzeELF(filePath string) (map[string]interface{}, error) 
 
 	for _, sym := range syms {
 		if elf.ST_TYPE(sym.Info) == elf.STT_FUNC && sym.Size > 0 {
-			// Basic heuristic: check if it's likely within .text
-			// (if section index is valid, we can be more certain, but this is a broad filter)
 			if textSection != nil && (sym.Value < textSection.Addr || sym.Value >= textSection.Addr+textSection.Size) {
-				continue // Skip functions outside .text bounds for now to avoid false positives
+				continue
 			}
 
-			// Clean up the name for display if necessary
 			funcName := sym.Name
+			addr := sym.Value
+			thumbMode := false
+			if archName == "ARM32" && addr&1 != 0 {
+				thumbMode = true
+				addr &^= 1
+			}
 
-			funcs = append(funcs, map[string]interface{}{
+			entry := map[string]interface{}{
 				"name":       funcName,
-				"address":    fmt.Sprintf("0x%X", sym.Value),
+				"address":    fmt.Sprintf("0x%X", addr),
 				"size":       sym.Size,
 				"protection": "Virtualization",
-			})
+			}
+			if thumbMode {
+				entry["thumb"] = true
+			}
+			funcs = append(funcs, entry)
 		}
 	}
 
 	return map[string]interface{}{
 		"fileName":  fileName,
 		"filePath":  filePath,
-		"arch":      "ARM64",
+		"arch":      archName,
 		"format":    "ELF",
 		"functions": funcs,
 	}, nil
@@ -210,10 +224,7 @@ func (e *VMPEngine) Protect(options map[string]interface{}) error {
 	runtime.EventsEmit(e.ctx, "vmp-log", fmt.Sprintf("[+] 开始提取并编译 %d 个目标函数节点 (符号: %d, 地址: %d)...", totalCount, len(funcs), len(addrSpecs)))
 
 	packer := elfpacker.NewPacker(targetFile, outPath, funcs, addrSpecs, verbose, stripSymbols, enableDebug, tokenEntry, interpBlob)
-
-	// Temporarily override os.Stdout/os.Stderr or just let it process.
-	// Since NewPacker prints to os.Stdout directly, the user wants logs in the GUI.
-	// We'll trust that the quick process will just throw out outputs and we emit main events.
+	packer.SetInterpBlobARM32(interpBlobARM32)
 
 	if err := packer.Process(); err != nil {
 		runtime.EventsEmit(e.ctx, "vmp-log", fmt.Sprintf("[x] 保护失败: %v", err))

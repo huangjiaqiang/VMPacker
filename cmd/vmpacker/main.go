@@ -11,19 +11,22 @@ import (
 )
 
 // ============================================================
-// vmpacker - ARM64 ELF VMP 保护工具 (模块化版本)
+// vmpacker - ARM64/ARM32 ELF VMP 保护工具 (模块化版本)
 //
 // 用法:
 //   vmpacker -func check_license [-v] [-o output] input.elf
 //   vmpacker -info input.elf
 //
 // 功能:
-//   读取编译好的 ARM64 ELF，解码指定函数的 ARM64 指令，
+//   读取编译好的 ARM64/ARM32 ELF，解码指定函数的指令，
 //   翻译为自定义 VM 字节码，替换原函数为 VM 跳板。
 // ============================================================
 
 //go:embed vm_interp.bin
 var interpBlob []byte
+
+//go:embed vm_interp_arm32.bin
+var interpBlobARM32 []byte
 
 func main() {
 	funcList := flag.String("func", "", "要保护的函数名（逗号分隔多个）")
@@ -36,7 +39,7 @@ func main() {
 	info := flag.Bool("info", false, "仅打印 ELF 信息，不做保护")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `vmpacker - ARM64 ELF VMP 保护工具
+		fmt.Fprintf(os.Stderr, `vmpacker - ARM64/ARM32 ELF VMP 保护工具
 
 用法:
   vmpacker -func <函数名> [-v] [-o output] <input.elf>
@@ -124,7 +127,7 @@ func main() {
 
 	// 执行
 	fmt.Println("========================================")
-	fmt.Println("  vmpacker - ARM64 ELF VMP 保护工具")
+	fmt.Println("  vmpacker - ARM64/ARM32 ELF VMP 保护工具")
 	fmt.Println("========================================")
 	fmt.Printf("[*] 输入: %s\n", inputPath)
 	fmt.Printf("[*] 输出: %s\n", outPath)
@@ -132,6 +135,7 @@ func main() {
 	fmt.Println()
 
 	packer := elfpacker.NewPacker(inputPath, outPath, funcs, addrSpecs, *verbose, *strip, *debug, *tokenEntry, interpBlob)
+	packer.SetInterpBlobARM32(interpBlobARM32)
 	if err := packer.Process(); err != nil {
 		fmt.Fprintf(os.Stderr, "\n[!] 失败: %v\n", err)
 		os.Exit(1)

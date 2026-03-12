@@ -93,47 +93,53 @@ static inline u32 h_vst16(vm_ctx_t *vm) {
 }
 
 /* SVC #imm16  [3B: op | imm16_lo | imm16_hi]
- * 执行 Linux syscall: X8=syscall号, X0-X5=参数, 结果写回 X0
- * imm16 通常为 0 (Linux AArch64 只用 svc #0) */
+ * 执行 Linux syscall: X8/R7=syscall号, X0-X5/R0-R5=参数, 结果写回 X0/R0
+ * imm16 通常为 0 (Linux 只用 svc #0) */
 static inline u32 h_svc(vm_ctx_t *vm) {
-  /* 从 VM 寄存器读取 syscall 参数 */
-  register long x8 __asm__("x8") = (long)vm->R[8]; /* syscall number */
+#ifdef __aarch64__
+  /* ARM64: x8=syscall, x0-x5=args */
+  register long x8 __asm__("x8") = (long)vm->R[8];
   register long x0 __asm__("x0") = (long)vm->R[0];
   register long x1 __asm__("x1") = (long)vm->R[1];
   register long x2 __asm__("x2") = (long)vm->R[2];
   register long x3 __asm__("x3") = (long)vm->R[3];
   register long x4 __asm__("x4") = (long)vm->R[4];
   register long x5 __asm__("x5") = (long)vm->R[5];
-  __asm__ volatile("svc #0"
-                   : "+r"(x0)
-                   : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
-                   : "memory");
+  __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5) : "memory");
   vm->R[0] = (u64)x0;
+#else
+  /* ARM32: r7=syscall, r0-r6=args */
+  register long r7 __asm__("r7") = (long)vm->R[7];
+  register long r0 __asm__("r0") = (long)vm->R[0];
+  register long r1 __asm__("r1") = (long)vm->R[1];
+  register long r2 __asm__("r2") = (long)vm->R[2];
+  register long r3 __asm__("r3") = (long)vm->R[3];
+  register long r4 __asm__("r4") = (long)vm->R[4];
+  register long r5 __asm__("r5") = (long)vm->R[5];
+  __asm__ volatile("svc #0" : "+r"(r0) : "r"(r7), "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5) : "memory");
+  vm->R[0] = (u64)r0;
+#endif
   return 3;
 }
 
 /* MRS Xd, <sysreg>  [4B: op | d | sysreg_lo | sysreg_hi]
- * 读取 ARM64 系统寄存器到 VM 虚拟寄存器。
+ * 读取系统寄存器到 VM 虚拟寄存器。
  * sysreg 是 15-bit 编码 = bits[19:5] of the MRS instruction.
- * 支持的系统寄存器:
- *   0x5F02 = cntvct_el0 (timer count)
- *   0x5F00 = cntfrq_el0 (timer frequency)
  */
 static inline u32 h_mrs(vm_ctx_t *vm) {
   u8 d = vm->bc[vm->pc + 1];
   u16 sysreg = (u16)vm->bc[vm->pc + 2] | ((u16)vm->bc[vm->pc + 3] << 8);
   u64 val = 0;
+#ifdef __aarch64__
   switch (sysreg) {
-  case 0x5F02: /* cntvct_el0 */
-    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(val));
-    break;
-  case 0x5F00: /* cntfrq_el0 */
-    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(val));
-    break;
-  default:
-    /* 不支持的系统寄存器，返回 0 */
-    break;
+  case 0x5F02: __asm__ volatile("mrs %0, cntvct_el0" : "=r"(val)); break;
+  case 0x5F00: __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(val)); break;
+  default: break;
   }
+#else
+  /* ARM32: cntvct_el0/cntfrq_el0 不存在，返回 0 */
+  (void)sysreg;
+#endif
   vm->R[d & 31] = val;
   return 4;
 }

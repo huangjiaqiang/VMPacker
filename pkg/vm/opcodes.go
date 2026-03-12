@@ -71,6 +71,9 @@ const (
 	OpJae byte = 0x64 // JAE (无符号大于等于)
 	OpJbe byte = 0x53 // JBE (无符号小于等于, CF||ZF)  B.LS
 	OpJa  byte = 0x65 // JA  (无符号大于, !CF&&!ZF)    B.HI
+	// 溢出跳转
+	OpJvs byte = 0x76 // JVS imm32 (OF=1, overflow set)   B.VS
+	OpJvc byte = 0x77 // JVC imm32 (OF=0, overflow clear)  B.VC
 
 	// 栈操作
 	OpPush byte = 0x63 // PUSH Rx             2B
