@@ -488,9 +488,9 @@ func (p *Packer) Process() error {
 
 			var tr *arm32.Translator
 			if isThumbFunc {
-				tr = arm32.NewThumbTranslator(fi.Addr, int(fi.Size))
+				tr = arm32.NewThumbTranslator(fi.Addr, int(fi.Size), code)
 			} else {
-				tr = arm32.NewTranslator(fi.Addr, int(fi.Size))
+				tr = arm32.NewTranslator(fi.Addr, int(fi.Size), code)
 			}
 			if p.debug {
 				tr.SetDebug(true)
@@ -609,9 +609,9 @@ func (p *Packer) Process() error {
 				if p.isARM32 {
 					var tr32 *arm32.Translator
 					if isThumbFunc {
-						tr32 = arm32.NewThumbTranslator(fi.Addr, int(fi.Size))
+						tr32 = arm32.NewThumbTranslator(fi.Addr, int(fi.Size), code)
 					} else {
-						tr32 = arm32.NewTranslator(fi.Addr, int(fi.Size))
+						tr32 = arm32.NewTranslator(fi.Addr, int(fi.Size), code)
 					}
 					tr32.SetDebug(true)
 					tr32.Translate(insts)
@@ -653,7 +653,6 @@ func (p *Packer) Process() error {
 		remapBranchTargets(reversed, newCodeLen, offsetMap, p.verbose)
 
 		// 重映射 addr_map 中的 vm_off (BR 间接跳转)
-		// trailer 在 result.Bytecode[result.CodeLen:] 中，每个 entry 8B: [arm64_off:u32][vm_off:u32]
 		mapCount := binary.LittleEndian.Uint32(result.Bytecode[len(result.Bytecode)-16:])
 		trailerStart := result.CodeLen
 		for j := 0; j < int(mapCount); j++ {
@@ -678,22 +677,18 @@ func (p *Packer) Process() error {
 		}
 
 		// ---- OpcodeCryptor: 逐指令 opcode 加密 ----
-		// 生成随机 oc_key (4 字节)
 		var ocKeyBuf [4]byte
 		if _, err := rand.Read(ocKeyBuf[:]); err != nil {
 			return fmt.Errorf("generating oc_key failed: %v", err)
 		}
 		ocKey := binary.LittleEndian.Uint32(ocKeyBuf[:])
 
-		// 加密字节码中每条指令的 opcode 字节 (仅 [0:CodeLen] 范围)
-		// reversed=true: 每条指令后有 1B size 标记
+		// 加密字节码 (reversed=true: 每条指令后有 1B size 标记)
 		encryptOpcodes(result.Bytecode, result.CodeLen, ocKey, true)
 
-		// 将 reverse 标志 + oc_key 写入 trailer 占位位置
-		// trailer: [BR map entries][reverse(1B)][oc_key(4B)][map_count][func_addr][func_size]
-		// reverse 位于 BR map 之后
-		reverseOffset := result.CodeLen + int(mapCount)*8 // BR map 之后
-		result.Bytecode[reverseOffset] = 1                // reverse = 1
+		// 将 reverse 标志 + oc_key 写入 trailer
+		reverseOffset := result.CodeLen + int(mapCount)*8
+		result.Bytecode[reverseOffset] = 1
 		ocKeyOffset := reverseOffset + 1                  // reverse(1B) 之后
 		binary.LittleEndian.PutUint32(result.Bytecode[ocKeyOffset:], ocKey)
 

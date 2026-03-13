@@ -38,6 +38,7 @@ type Translator struct {
 	debugLog         []DebugEntry
 	thumbMode        bool
 	literalPoolStart int // index in instruction slice where literal pool begins (-1 = none)
+	rawCode          []byte // raw function machine code (for PC-relative literal pool resolution)
 }
 
 type branchFixup struct {
@@ -45,20 +46,26 @@ type branchFixup struct {
 	arm32Target int
 }
 
-// NewTranslator creates a new ARM32 translator
-func NewTranslator(funcAddr uint64, funcSize int) *Translator {
-	return &Translator{
+// NewTranslator creates a new ARM32 translator.
+// rawCode is the raw function machine code for resolving PC-relative literal pool loads.
+func NewTranslator(funcAddr uint64, funcSize int, rawCode ...[]byte) *Translator {
+	t := &Translator{
 		code:     make([]byte, 0, funcSize*4),
 		labels:   make(map[int]int),
 		funcAddr: funcAddr,
 		funcSize: funcSize,
 		decoder:  NewDecoder(),
 	}
+	if len(rawCode) > 0 {
+		t.rawCode = rawCode[0]
+	}
+	return t
 }
 
-// NewThumbTranslator creates a Thumb mode translator
-func NewThumbTranslator(funcAddr uint64, funcSize int) *Translator {
-	return &Translator{
+// NewThumbTranslator creates a Thumb mode translator.
+// rawCode is the raw function machine code for resolving PC-relative literal pool loads.
+func NewThumbTranslator(funcAddr uint64, funcSize int, rawCode ...[]byte) *Translator {
+	t := &Translator{
 		code:      make([]byte, 0, funcSize*4),
 		labels:    make(map[int]int),
 		funcAddr:  funcAddr,
@@ -66,6 +73,10 @@ func NewThumbTranslator(funcAddr uint64, funcSize int) *Translator {
 		decoder:   NewThumbDecoder(),
 		thumbMode: true,
 	}
+	if len(rawCode) > 0 {
+		t.rawCode = rawCode[0]
+	}
+	return t
 }
 
 // SetDebug enables debug mode

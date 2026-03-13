@@ -36,6 +36,25 @@
 
 #include "../vm_token.h"
 
+/* ARM32 packer writes 8 bytes/entry (bc_off u32 + bc_len u32), not 16 like token_desc_t */
+typedef struct { u32 bc_off; u32 bc_len; } token_desc_arm32_t;
+
+/* ---- ARM32 syscall numbers ---- */
+#define ARM32_NR_WRITE 4
+
+#ifdef VM_DEBUG
+static void debug_char(char c) {
+  register long r7 __asm__("r7") = ARM32_NR_WRITE;
+  register long r0 __asm__("r0") = 2;
+  register long r1 __asm__("r1") = (long)&c;
+  register long r2 __asm__("r2") = 1;
+  __asm__ volatile("svc #0" : "+r"(r0) : "r"(r7), "r"(r1), "r"(r2) : "memory");
+}
+#define DBG(c) do { char _d = (c); debug_char(_d); } while(0)
+#else
+#define DBG(c) ((void)0)
+#endif
+
 /* ---- ARM32 syscall: mmap2 ---- */
 static inline void *sys_mmap_arm32(unsigned long size) {
   register long r7 __asm__("r7") = ARM32_NR_MMAP2;
@@ -64,50 +83,57 @@ static inline void sys_munmap_arm32(void *addr, unsigned long size) {
 __attribute__((section(".text.entry")))
 u64 vm_entry(u64 *args, u8 *enc_bc, u32 bc_len, u8 xor_key);
 
-/* get_self_va and _token_table_va defined in token_table_va.S */
+/* get_self_va: returns runtime address of _token_table_va (PIE-safe via ADR) */
 extern u32 get_self_va(void);
-extern volatile u32 _token_table_va;
 
 /* ---- Token entry inner function ---- */
 __attribute__((noinline, section(".text.entry")))
 u64 vm_entry_token_inner(u32 *args, u32 token) {
+  DBG('1'); /* inner start */
   u8 xor_key = (u8)TOKEN_XOR_KEY(token);
   u32 func_id = TOKEN_FUNC_ID(token);
 
-  /* PIE: get runtime base via get_self_va() (uses ADR in same-file asm) */
+  /* PIE: get_self_va() returns &_token_table_va; read value via pointer to avoid
+   * absolute-address load (stub not -fPIC, would fault at link-time addr) */
   u32 self_va = get_self_va();
-  u32 tbl_off = _token_table_va;
+  DBG('2'); /* after get_self_va */
+  u32 tbl_off = *(const u32 *)self_va;
   if (__builtin_expect(tbl_off == 0, 0))
     return 0;
+  DBG('3'); /* tbl_off ok */
 
-  token_desc_t *table = (token_desc_t *)(self_va + tbl_off);
+  token_desc_arm32_t *table = (token_desc_arm32_t *)(self_va + tbl_off);
   u8 *enc_bc = (u8 *)(self_va + table[func_id].bc_off);
   u32 bc_len = table[func_id].bc_len;
-
+  DBG('4'); /* table lookup ok */
   if (__builtin_expect(enc_bc == (u8 *)self_va || bc_len == 0, 0))
     return 0;
-
-  /* Promote args to u64 array for vm_entry compatibility */
-  u64 args64[12];
-  for (int i = 0; i < 12; i++)
+  DBG('5'); /* before vm_entry */
+  /* Promote args to u64 array for vm_entry compatibility.
+   * Stack layout after push {r0-r12, lr}: 14 words.
+   * args[0..12] = R0..R12, args[13] = LR. */
+  u64 args64[14];
+  for (int i = 0; i < 14; i++)
     args64[i] = (u64)args[i];
 
   return vm_entry(args64, enc_bc, bc_len, xor_key);
 }
 
 /*
- * Naked assembly entry: saves ARM32 callee-saved registers,
+ * Naked assembly entry: saves ALL ARM32 general registers R0-R12 + LR,
  * passes saved register block and token (R12/IP) to C inner function.
+ * 14 registers = 56 bytes, maintains 8-byte stack alignment.
  * Works for both ARM and Thumb callers via BX LR return.
  */
 __attribute__((naked, section(".text.entry"), used))
 void vm_entry_token(void) {
   __asm__ volatile(
-      "push {r0-r7, r9, r10, r11, lr}\n"
-      "mov r0, sp\n"           /* R0 = pointer to saved registers (12 words) */
+      "push {r0-r12, lr}\n"
+      "mov r0, sp\n"           /* R0 = pointer to saved registers (14 words) */
       "mov r1, r12\n"          /* R1 = token (passed via R12/IP) */
       "bl vm_entry_token_inner\n"
-      "pop {r0-r7, r9, r10, r11, lr}\n"
+      "str r0, [sp]\n"         /* overwrite saved r0 with return value */
+      "pop {r0-r12, lr}\n"
       "bx lr\n"                /* interwork-safe return */
   );
 }
@@ -115,12 +141,14 @@ void vm_entry_token(void) {
 /* ---- vm_entry implementation ---- */
 __attribute__((section(".text.entry")))
 u64 vm_entry(u64 *args, u8 *enc_bc, u32 bc_len, u8 xor_key) {
+  DBG('6'); /* vm_entry start */
   u64 ret = 0;
 
   if (bc_len > VM_BYTECODE_MAX)
     bc_len = VM_BYTECODE_MAX;
   u32 alloc_size = (bc_len + 4095u) & ~4095u;
   u8 *bc_buf = (u8 *)sys_mmap_arm32(alloc_size);
+  DBG('7'); /* after bc mmap */
   if ((long)bc_buf < 0)
     return 0;
 
@@ -141,16 +169,18 @@ u64 vm_entry(u64 *args, u8 *enc_bc, u32 bc_len, u8 xor_key) {
   /* Allocate VM context via mmap */
   u32 ctx_alloc = (sizeof(vm_ctx_t) + 4095u) & ~4095u;
   vm_ctx_t *vm = (vm_ctx_t *)sys_mmap_arm32(ctx_alloc);
+  DBG('8'); /* after ctx mmap */
   if ((long)vm < 0) {
     sys_munmap_arm32(bc_buf, alloc_size);
     return 0;
   }
 
-  /* Initialize context using ARM32 variant */
+  /* Initialize context: args[0..12] = R0..R12, args[13] = LR (R14) */
   for (int i = 0; i < VM_REG_COUNT; i++)
     vm->R[i] = 0;
-  for (int i = 0; i < 10 && i < VM_REG_COUNT; i++)
+  for (int i = 0; i < 13 && i < VM_REG_COUNT; i++)
     vm->R[i] = args[i];
+  vm->R[ARM32_LR] = args[13];
   vm->R[ARM32_SP] = (u64)&vm->vm_stk[VM_MEM_STACK];
   vm->bc = bc_buf;
   vm->bc_len = bc_len;
@@ -209,6 +239,7 @@ u64 vm_entry(u64 *args, u8 *enc_bc, u32 bc_len, u8 xor_key) {
 #ifdef VM_INDIRECT_DISPATCH
   vm_handler_fn vm_jump_table[256];
   vm_init_jump_table(vm_jump_table);
+  DBG('9'); /* before VM loop */
 
   if (vm->reverse) {
     vm->pc = vm->bc_len;

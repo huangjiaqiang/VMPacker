@@ -208,7 +208,8 @@ func BuildTokenTrampolineARM32(funcAddr, vmEntryTokenVA uint32, token uint32) []
 	writeU32(&buf, 0xE340C000|uint32(imm4Hi)<<16|uint32(imm12Hi))
 
 	// B vm_entry_token: cond=AL, 1010:imm24
-	bPC := funcAddr + 8 // current PC = funcAddr + 8 (pipeline)
+	// B instruction is at funcAddr+8. ARM32 pipeline: PC = inst_addr + 8.
+	bPC := funcAddr + 8 + 8 // B inst addr + ARM pipeline offset
 	bOffset := int32(vmEntryTokenVA) - int32(bPC)
 	bImm24 := (bOffset >> 2) & 0x00FFFFFF
 	writeU32(&buf, 0xEA000000|uint32(bImm24))
@@ -236,7 +237,8 @@ func BuildTokenTrampolineThumb(funcAddr, vmEntryTokenVA uint32, token uint32) []
 	writeThumb32MovT(&buf, 12, hi16)
 
 	// Thumb-2 B.W: 11110:S:imm10 || 10:J1:1:J2:imm11
-	bPC := funcAddr + 4 // Thumb PC = current + 4
+	// B.W instruction is at funcAddr+8. Thumb PC = inst_addr + 4.
+	bPC := funcAddr + 8 + 4 // B.W inst addr + Thumb pipeline offset
 	bOffset := int32(vmEntryTokenVA) - int32(bPC)
 	writeThumb32BranchW(&buf, bOffset)
 

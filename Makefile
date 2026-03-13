@@ -5,6 +5,7 @@
 # make packer → 仅编译 Go packer（需先 make stub）
 # make demo   → 交叉编译 demo 程序
 # make test   → 运行 Go 单元测试
+# make test-build → 在 test/ 目录构建测试程序
 # make clean  → 清理所有产物
 # ============================================================
 
@@ -56,17 +57,21 @@ STUB_CFLAGS = -c -Os -mcmodel=tiny -fno-stack-protector \
               -fno-builtin -nostdlib -march=armv8-a \
               -DVM_INDIRECT_DISPATCH -DVM_FUNC_SPLIT -DVM_TOKEN_ENTRY
 
-# 编译选项 (ARM32: -march=armv7-a -mthumb-interwork for Thumb mode support)
+# 编译选项 (ARM32: -marm 确保 stub 为 ARM 以匹配 trampoline 的 B 跳转，-mthumb-interwork 供 token_table_va.S)
+# -fPIC is required: the stub blob is linked at VA 0 but loaded at a different runtime VA.
+# Without -fPIC, GCC emits absolute addresses in literal pools and switch jump tables,
+# causing crashes when the blob runs at a non-zero base address.
 STUB32_CFLAGS = -c -Os -fno-stack-protector \
                 -fno-builtin -nostdlib \
-                -march=armv7-a -mthumb-interwork -mfloat-abi=soft \
+                -marm -march=armv7-a -mthumb-interwork -mfloat-abi=soft \
+                -fPIC \
                 -DVM_INDIRECT_DISPATCH -DVM_FUNC_SPLIT -DVM_TOKEN_ENTRY
 
 
 DEMO_CFLAGS = -static -O0 -march=armv8-a
 
 # ============================================================
-.PHONY: all stub stub32 packer demo test clean help gui sync-public
+.PHONY: all stub stub32 stub32-debug packer demo test clean help gui sync-public
 
 all: stub stub32 packer
 	@echo ""
@@ -103,13 +108,19 @@ $(STUB_BIN): $(STUB_ELF) | $(BUILD_DIR)
 	@copy /Y "$(subst /,\,$(STUB_BIN))" "$(subst /,\,$(BUILD_DIR))\vm_interp.bin" > nul
 
 # ------ VM 解释器 blob (ARM32) ------
+# stub32-debug: 带 VM_DEBUG，输出字符 1-9 到 stderr 追踪执行路径
+stub32-debug:
+	$(CC_ARM32) $(STUB32_CFLAGS) -DVM_DEBUG -I$(STUB_DIR) $(STUB32_SRC) -o $(STUB32_O)
+	$(MAKE) -f $(MAKEFILE_LIST) $(STUB32_BIN)
+	@echo "[+] stub32 built with VM_DEBUG (run protected binary, check stderr for 1-9)"
+
 stub32: $(STUB32_BIN)
 
 $(STUB32_O): $(STUB32_SRC) | $(BUILD_DIR)/stub
 	$(CC_ARM32) $(STUB32_CFLAGS) -I$(STUB_DIR) $< -o $@
 
 $(STUB32_VA_O): $(STUB32_ASM) | $(BUILD_DIR)/stub
-	$(CC_ARM32) -c -march=armv7-a -mthumb-interwork $< -o $@
+	$(CC_ARM32) -c -marm -march=armv7-a -mthumb-interwork $< -o $@
 
 $(STUB32_ELF): $(STUB32_O) $(STUB32_VA_O) $(STUB32_LDS)
 	$(LD_ARM32) -T $(STUB32_LDS) -o $@ $(STUB32_O) $(STUB32_VA_O)
@@ -161,6 +172,14 @@ clean:
 	@powershell -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$(BUILD_DIR)', '$(STUB_BIN)', '$(STUB32_BIN)'"
 	@echo "[+] cleaned"
 
+# ------ 测试程序构建与保护 ------
+test-build: stub stub32
+	@$(MAKE) -C test arm64
+
+test-protect: test-build
+	@go run ./cmd/vmpacker/ -func log2Console -v -debug -o test/simple_app_protected test/simple_app_arm64
+	@echo "[+] Protected: test/simple_app_protected"
+
 # ------ 帮助 ------
 help:
 	@echo "make all     - 编译 stub (ARM64+ARM32) + packer (输出到 build/)"
@@ -171,6 +190,8 @@ help:
 	@echo "make gui     - 编译 GUI 版本 + NSIS 安装包"
 	@echo "make demo    - 交叉编译 demo 程序"
 	@echo "make test    - 运行单元测试"
+	@echo "make test-build  - 构建 test/simple_app (需 aarch64-linux-gnu-gcc)"
+	@echo "make test-protect - 构建并保护 test 程序"
 	@echo "make clean        - 清理所有产物"
 	@echo "make sync-public  - 同步到公开仓库 (vmpack remote)"
 

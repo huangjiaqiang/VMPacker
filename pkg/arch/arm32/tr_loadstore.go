@@ -1,6 +1,8 @@
 package arm32
 
 import (
+	"encoding/binary"
+
 	"github.com/vmpacker/pkg/vm"
 )
 
@@ -43,6 +45,31 @@ func needsSignExtend(op Op) int {
 	}
 }
 
+// resolvePCRelativeLoad attempts to resolve a PC-relative LDR at translation time.
+// ARM32: PC = instruction address + 8; Thumb: PC = instruction address + 4 (aligned down to 4).
+// Returns the resolved value and true if successful, or 0 and false if unresolvable.
+func (t *Translator) resolvePCRelativeLoad(inst vm.Instruction) (uint32, bool) {
+	if inst.Rn != 15 || t.rawCode == nil {
+		return 0, false
+	}
+	pcVal := inst.Offset + t.pcOffset()
+	if !t.thumbMode {
+		// ARM mode: PC = inst_addr + 8, target = PC + signed_imm
+		targetOff := pcVal + int(inst.Imm)
+		if targetOff >= 0 && targetOff+4 <= len(t.rawCode) {
+			return binary.LittleEndian.Uint32(t.rawCode[targetOff:]), true
+		}
+	} else {
+		// Thumb mode: PC = (inst_addr + 4) & ~3, target = PC + unsigned_imm
+		alignedPC := (pcVal) & ^3
+		targetOff := alignedPC + int(inst.Imm)
+		if targetOff >= 0 && targetOff+4 <= len(t.rawCode) {
+			return binary.LittleEndian.Uint32(t.rawCode[targetOff:]), true
+		}
+	}
+	return 0, false
+}
+
 // trCondLoad translates LDR/LDRB/LDRH/LDRSB/LDRSH (immediate offset)
 func (t *Translator) trCondLoad(inst vm.Instruction) error {
 	skipPos, needsFix := t.emitCondCheck(inst.Cond)
@@ -51,6 +78,36 @@ func (t *Translator) trCondLoad(inst vm.Instruction) error {
 	if err != nil {
 		return err
 	}
+
+	// PC-relative LDR: resolve literal pool value at translation time.
+	// The original literal pool data is destroyed when the trampoline replaces the function,
+	// so we must inline the constant.
+	if inst.Rn == 15 && inst.WB == 0 {
+		op := Op(inst.Op)
+		if val, ok := t.resolvePCRelativeLoad(inst); ok {
+			switch op {
+			case LDRB_IMM:
+				t.sPushImm32(val & 0xFF)
+			case LDRH_IMM:
+				t.sPushImm32(val & 0xFFFF)
+			case LDRSB_IMM:
+				v := int32(int8(val & 0xFF))
+				t.sPushImm32(uint32(v))
+			case LDRSH_IMM:
+				v := int32(int16(val & 0xFFFF))
+				t.sPushImm32(uint32(v))
+			default:
+				t.sPushImm32(val)
+			}
+			t.emitTrunc32()
+			t.sVstore(rd)
+			if needsFix {
+				t.patchCondSkip(skipPos)
+			}
+			return nil
+		}
+	}
+
 	rn, err := t.mapReg(inst.Rn)
 	if err != nil {
 		return err
@@ -396,15 +453,16 @@ func (t *Translator) trCondLDM(inst vm.Instruction) error {
 
 	// Load each register in reglist
 	loadedPC := false
+	first := true
 	for i := 0; i < 16; i++ {
 		if reglist&(1<<uint(i)) == 0 {
 			continue
 		}
-		if i > 0 {
-			// Next word: addr += 4
+		if !first {
 			t.sPushImm32(4)
 			t.emit(vm.OpSAdd)
 		}
+		first = false
 		t.sDup() // keep addr for next iteration
 		t.emit(vm.OpSLd32)
 
