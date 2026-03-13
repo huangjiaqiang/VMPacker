@@ -4,13 +4,20 @@
  * 包含常用指令的计算逻辑及日志打印，用于验证 VMP 保护后程序能否正常运行。
  * 核心函数 log2Console 将作为保护目标。
  *
- * 编译: 见 test/Makefile
+ * 两种编译模式 (见 test/Makefile):
+ *   1) 静态模式: gcc simple_app.cpp -o simple_app        (仅测试可执行文件保护)
+ *   2) SO 模式:  gcc -DUSE_SHARED_LIB simple_app.cpp -lvmptest  (同时测试 .so 保护)
+ *
  * 保护: go run ./cmd/vmpacker/ -func log2Console -v -debug -o /tmp/simple_app_protected simple_app
  * 运行: ./simple_app_protected
  */
 
 #include <stdio.h>
 #include <string.h>
+
+#ifdef USE_SHARED_LIB
+#include "libvmptest.h"
+#endif
 
 /**
  * log2Console - 模拟日志输出到控制台的核心函数
@@ -70,13 +77,36 @@ void computeAndLog(const char* msg, int x, int y) {
 int main(int argc, char* argv[]) {
   printf("=== VMPacker Simple App Test ===\n");
 
-  /* 调用被保护的 log2Console */
+  /* 调用被保护的 log2Console (可执行文件内) */
   computeAndLog("init", 10, 20);
   computeAndLog("step1", 5, 15);
   computeAndLog("step2", 100, 200);
 
-  int final = log2Console("done", 1, 42);
-  printf("[LOG] Final result: %d\n", final);
+  int final_result = log2Console("done", 1, 42);
+  printf("[LOG] Final result: %d\n", final_result);
+
+#ifdef USE_SHARED_LIB
+  /* 调用共享库中的被保护函数 */
+  printf("\n--- Shared library (.so) tests ---\n");
+
+  int r1 = vmp_compute("hello", 0, 42);
+  int r2 = vmp_compute("hello", 1, 42);
+  int r3 = vmp_compute("hello", 2, 42);
+  int r4 = vmp_compute("world", 0, 42);
+  int r5 = vmp_compute((const char*)0, 0, 0);
+  printf("[SO] vmp_compute(\"hello\",0,42) = %d\n", r1);
+  printf("[SO] vmp_compute(\"hello\",1,42) = %d\n", r2);
+  printf("[SO] vmp_compute(\"hello\",2,42) = %d\n", r3);
+  printf("[SO] vmp_compute(\"world\",0,42) = %d\n", r4);
+  printf("[SO] vmp_compute(NULL,0,0)      = %d\n", r5);
+
+  int v1 = vmp_verify_key("ABCD-1234-EFGH", 100);
+  int v2 = vmp_verify_key("short", 100);
+  int v3 = vmp_verify_key((const char*)0, 100);
+  printf("[SO] vmp_verify_key(\"ABCD-1234-EFGH\",100) = %d\n", v1);
+  printf("[SO] vmp_verify_key(\"short\",100)           = %d\n", v2);
+  printf("[SO] vmp_verify_key(NULL,100)               = %d\n", v3);
+#endif
 
   printf("=== Test completed successfully ===\n");
   return 0;

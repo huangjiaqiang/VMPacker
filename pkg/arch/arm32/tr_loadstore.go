@@ -138,6 +138,10 @@ func (t *Translator) trCondLoad(inst vm.Instruction) error {
 		t.emit(sLdOp)
 		t.sVstore(rd)
 		emitWriteback()
+		if inst.Rd == 15 {
+			// LDR PC, [Rn], #imm = POP {PC} → function return
+			t.emit(vm.OpRet, 0)
+		}
 		goto signext
 	} else {
 		// Offset mode
@@ -164,6 +168,11 @@ func (t *Translator) trCondLoad(inst vm.Instruction) error {
 
 	t.emitTrunc32()
 	t.sVstore(rd)
+
+	if inst.Rd == 15 {
+		// LDR PC, [...] = branch to loaded address → function return
+		t.emit(vm.OpRet, 0)
+	}
 
 	if needsFix {
 		t.patchCondSkip(skipPos)

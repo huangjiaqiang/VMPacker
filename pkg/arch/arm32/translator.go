@@ -217,15 +217,40 @@ func (t *Translator) patchCondSkip(fixPos int) {
 func (t *Translator) Translate(instructions []vm.Instruction) (*TranslateResult, error) {
 	result := &TranslateResult{TotalInsts: len(instructions)}
 
-	// Pre-scan: mark trailing literal pool data by scanning backwards from end.
-	// Consecutive UNSUPPORTED/UNKNOWN at the end are literal pool, not real code.
+	// Pre-scan: mark trailing literal pool data.
+	// Strategy: find the last return instruction (BX LR / POP {PC} / LDR PC),
+	// then everything after it is literal pool data.  Fall back to the old
+	// consecutive-UNKNOWN scan when no return is found.
 	t.literalPoolStart = -1
-	for i := len(instructions) - 1; i >= 0; i-- {
-		op := Op(instructions[i].Op)
-		if op == UNSUPPORTED || op == UNKNOWN {
-			t.literalPoolStart = i
-		} else {
-			break
+	lastRetIdx := -1
+	for i, inst := range instructions {
+		op := Op(inst.Op)
+		switch op {
+		case BX:
+			if inst.Rm == 14 { // BX LR
+				lastRetIdx = i
+			}
+		case LDR_IMM:
+			if inst.Rd == 15 { // LDR PC, ... (POP {PC})
+				lastRetIdx = i
+			}
+		case LDM:
+			if uint16(inst.Imm)&(1<<15) != 0 { // reglist includes PC
+				lastRetIdx = i
+			}
+		}
+	}
+	if lastRetIdx >= 0 && lastRetIdx < len(instructions)-1 {
+		t.literalPoolStart = lastRetIdx + 1
+	} else {
+		// Fallback: consecutive UNSUPPORTED/UNKNOWN from the end
+		for i := len(instructions) - 1; i >= 0; i-- {
+			op := Op(instructions[i].Op)
+			if op == UNSUPPORTED || op == UNKNOWN {
+				t.literalPoolStart = i
+			} else {
+				break
+			}
 		}
 	}
 
@@ -498,7 +523,7 @@ func (t *Translator) translateOne(instructions []vm.Instruction, idx int) error 
 
 	// ========== Bit manipulation ==========
 	case CLZ:
-		return t.trCondUnary(inst, vm.OpSClz)
+		return t.trCondCLZ32(inst)
 	case RBIT:
 		return t.trCondUnary(inst, vm.OpSRbit)
 	case REV:
