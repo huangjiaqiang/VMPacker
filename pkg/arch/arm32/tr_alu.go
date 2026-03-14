@@ -62,6 +62,21 @@ func (t *Translator) emitBarrelShifterOnStack(inst vm.Instruction) {
 	t.emitTrunc32()
 }
 
+// sVloadOrPC loads a register value onto the eval stack.
+// If reg is R15 (PC), pushes (link-time PC value) + slide instead of reading vm->R[15].
+// ARM32 pipeline: PC = instruction address + 8 (ARM mode).
+func (t *Translator) sVloadOrPC(inst vm.Instruction, armReg int) {
+	if armReg == 15 {
+		pcVal := uint32(int64(t.funcAddr) + int64(inst.Offset) + int64(t.pcOffset()))
+		t.sPushImm32(pcVal)
+		t.emit(vm.OpSLoadSlide)
+		t.emit(vm.OpSAdd)
+		t.emitTrunc32()
+	} else {
+		t.sVload(byte(armReg))
+	}
+}
+
 // trCondAluImm translates Rd = Rn OP #imm with condition wrapper
 func (t *Translator) trCondAluImm(inst vm.Instruction, sOp byte) error {
 	skipPos, needsFix := t.emitCondCheck(inst.Cond)
@@ -70,12 +85,8 @@ func (t *Translator) trCondAluImm(inst vm.Instruction, sOp byte) error {
 	if err != nil {
 		return err
 	}
-	rn, err := t.mapReg(inst.Rn)
-	if err != nil {
-		return err
-	}
 
-	t.sVload(rn)
+	t.sVloadOrPC(inst, inst.Rn)
 	t.sPushImm(uint64(uint32(inst.Imm)))
 	t.emit(sOp)
 	t.emitTrunc32()
@@ -95,12 +106,8 @@ func (t *Translator) trCondAluImmFlags(inst vm.Instruction, sOp byte) error {
 	if err != nil {
 		return err
 	}
-	rn, err := t.mapReg(inst.Rn)
-	if err != nil {
-		return err
-	}
 
-	t.sVload(rn)
+	t.sVloadOrPC(inst, inst.Rn)
 	t.sPushImm(uint64(uint32(inst.Imm)))
 	t.emit(sOp)
 	t.sDup()
@@ -123,17 +130,9 @@ func (t *Translator) trCondAluReg(inst vm.Instruction, sOp byte) error {
 	if err != nil {
 		return err
 	}
-	rn, err := t.mapReg(inst.Rn)
-	if err != nil {
-		return err
-	}
-	rm, err := t.mapReg(inst.Rm)
-	if err != nil {
-		return err
-	}
 
-	t.sVload(rn)
-	t.sVload(rm)
+	t.sVloadOrPC(inst, inst.Rn)
+	t.sVloadOrPC(inst, inst.Rm)
 	t.emitBarrelShifterOnStack(inst)
 	t.emit(sOp)
 	t.emitTrunc32()
@@ -153,17 +152,9 @@ func (t *Translator) trCondAluRegFlags(inst vm.Instruction, sOp byte) error {
 	if err != nil {
 		return err
 	}
-	rn, err := t.mapReg(inst.Rn)
-	if err != nil {
-		return err
-	}
-	rm, err := t.mapReg(inst.Rm)
-	if err != nil {
-		return err
-	}
 
-	t.sVload(rn)
-	t.sVload(rm)
+	t.sVloadOrPC(inst, inst.Rn)
+	t.sVloadOrPC(inst, inst.Rm)
 	t.emitBarrelShifterOnStack(inst)
 	t.emit(sOp)
 	t.sDup()
@@ -186,13 +177,9 @@ func (t *Translator) trCondRSBImm(inst vm.Instruction, setFlags bool) error {
 	if err != nil {
 		return err
 	}
-	rn, err := t.mapReg(inst.Rn)
-	if err != nil {
-		return err
-	}
 
 	t.sPushImm(uint64(uint32(inst.Imm)))
-	t.sVload(rn)
+	t.sVloadOrPC(inst, inst.Rn)
 	t.emit(vm.OpSSub) // imm - Rn
 
 	if setFlags {
@@ -218,18 +205,10 @@ func (t *Translator) trCondRSBReg(inst vm.Instruction, setFlags bool) error {
 	if err != nil {
 		return err
 	}
-	rn, err := t.mapReg(inst.Rn)
-	if err != nil {
-		return err
-	}
-	rm, err := t.mapReg(inst.Rm)
-	if err != nil {
-		return err
-	}
 
-	t.sVload(rm)
+	t.sVloadOrPC(inst, inst.Rm)
 	t.emitBarrelShifterOnStack(inst)
-	t.sVload(rn)
+	t.sVloadOrPC(inst, inst.Rn)
 	t.emit(vm.OpSSub) // shift(Rm) - Rn
 
 	if setFlags {

@@ -85,6 +85,8 @@ var opTable = map[byte]opInfo{
 	OpVld16: {"VLD16", 3}, // op + rn + len
 	OpVst16: {"VST16", 3},
 
+	OpSLoadSlide: {"S_LOAD_SLIDE", 1},
+
 	OpTbz:  {"TBZ", 7}, // op + reg + bit + target32
 	OpTbnz: {"TBNZ", 7},
 

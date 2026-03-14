@@ -90,6 +90,9 @@ const (
 	OpVld16 byte = 0xC1 // vtmp ← mem[R[rn]], len bytes
 	OpVst16 byte = 0xC2 // mem[R[rn]] ← vtmp, len bytes
 
+	// PIE/ASLR
+	OpSLoadSlide byte = 0xC4 // push vm->slide  1B
+
 	// TBZ/TBNZ: [op][reg][bit][target32] = 7B
 	OpTbz  byte = 0x16 // TBZ  Xt, #bit, target
 	OpTbnz byte = 0x17 // TBNZ Xt, #bit, target

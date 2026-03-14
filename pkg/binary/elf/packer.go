@@ -1318,8 +1318,13 @@ func (p *Packer) injectVMPBatch32(funcs []FuncBytecode) error {
 	tblRelOff := tokenTableVA32 - selfVA32
 	binary.LittleEndian.PutUint32(p.data[payloadFileOff+uint32(tokenTableVAOff):], tblRelOff)
 
+	// Patch _link_time_self_va (word right after _token_table_va) with link-time VA
+	// so the stub can compute ASLR slide = runtime_self_va - link_time_self_va
+	binary.LittleEndian.PutUint32(p.data[payloadFileOff+uint32(tokenTableVAOff)+4:], selfVA32)
+
 	fmt.Printf("    [TOKEN] descriptor table VA: 0x%X, entries: %d\n", tokenTableVA32, len(funcs))
 	fmt.Printf("    [TOKEN] _token_table_va patched at blob offset 0x%X → relative offset 0x%X (PIE)\n", tokenTableVAOff, tblRelOff)
+	fmt.Printf("    [TOKEN] _link_time_self_va patched → 0x%X\n", selfVA32)
 
 	vmEntryTokenVA := payloadVA + uint32(tokenEntryOff)
 	fmt.Printf("    [TOKEN] vm_entry_token VA: 0x%X\n", vmEntryTokenVA)

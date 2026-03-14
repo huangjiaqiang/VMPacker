@@ -262,6 +262,12 @@ static inline u32 h_s_sext32(vm_ctx_t *vm) {
   return 1;
 }
 
+/* S_LOAD_SLIDE: push vm->slide (ASLR offset) onto eval stack */
+static inline u32 h_s_load_slide(vm_ctx_t *vm) {
+  SPUSH(vm, vm->slide);
+  return 1;
+}
+
 /* ================================================================
  * 栈比较
  * ================================================================ */

@@ -106,6 +106,28 @@ int main(int argc, char* argv[]) {
   printf("[SO] vmp_verify_key(\"ABCD-1234-EFGH\",100) = %d\n", v1);
   printf("[SO] vmp_verify_key(\"short\",100)           = %d\n", v2);
   printf("[SO] vmp_verify_key(NULL,100)               = %d\n", v3);
+
+  /* --- Functions with external libc calls (PLT) --- */
+  printf("\n--- External call tests (PLT) ---\n");
+
+  char md5buf[64];
+  int md5ret;
+
+  md5ret = vmp_md5_hex("hello", md5buf, sizeof(md5buf));
+  printf("[SO] vmp_md5_hex(\"hello\")     = %s  (rc=%d)\n", md5buf, md5ret);
+
+  md5ret = vmp_md5_hex("", md5buf, sizeof(md5buf));
+  printf("[SO] vmp_md5_hex(\"\")          = %s  (rc=%d)\n", md5buf, md5ret);
+
+  md5ret = vmp_md5_hex("The quick brown fox jumps over the lazy dog", md5buf, sizeof(md5buf));
+  printf("[SO] vmp_md5_hex(\"The q...\")  = %s  (rc=%d)\n", md5buf, md5ret);
+
+  md5ret = vmp_md5_hex((const char*)0, md5buf, sizeof(md5buf));
+  printf("[SO] vmp_md5_hex(NULL)         rc=%d\n", md5ret);
+
+  char procname[128];
+  int pnret = vmp_get_process_name(procname, sizeof(procname));
+  printf("[SO] vmp_get_process_name()   = \"%s\"  (len=%d)\n", procname, pnret);
 #endif
 
   printf("=== Test completed successfully ===\n");

@@ -81,7 +81,7 @@ static inline void sys_munmap_arm32(void *addr, unsigned long size) {
 
 /* ---- VM entry point ---- */
 __attribute__((section(".text.entry")))
-u64 vm_entry(u64 *args, u8 *enc_bc, u32 bc_len, u8 xor_key);
+u64 vm_entry(u64 *args, u8 *enc_bc, u32 bc_len, u8 xor_key, u64 slide);
 
 /* get_self_va: returns runtime address of _token_table_va (PIE-safe via ADR) */
 extern u32 get_self_va(void);
@@ -102,6 +102,10 @@ u64 vm_entry_token_inner(u32 *args, u32 token) {
     return 0;
   DBG('3'); /* tbl_off ok */
 
+  /* Compute ASLR slide: _link_time_self_va is the word right after _token_table_va */
+  u32 link_time_self = *(const u32 *)(self_va + 4);
+  u64 slide = (link_time_self != 0) ? (u64)(self_va - link_time_self) : 0;
+
   token_desc_arm32_t *table = (token_desc_arm32_t *)(self_va + tbl_off);
   u8 *enc_bc = (u8 *)(self_va + table[func_id].bc_off);
   u32 bc_len = table[func_id].bc_len;
@@ -116,7 +120,7 @@ u64 vm_entry_token_inner(u32 *args, u32 token) {
   for (int i = 0; i < 14; i++)
     args64[i] = (u64)args[i];
 
-  return vm_entry(args64, enc_bc, bc_len, xor_key);
+  return vm_entry(args64, enc_bc, bc_len, xor_key, slide);
 }
 
 /*
@@ -140,7 +144,7 @@ void vm_entry_token(void) {
 
 /* ---- vm_entry implementation ---- */
 __attribute__((section(".text.entry")))
-u64 vm_entry(u64 *args, u8 *enc_bc, u32 bc_len, u8 xor_key) {
+u64 vm_entry(u64 *args, u8 *enc_bc, u32 bc_len, u8 xor_key, u64 slide) {
   DBG('6'); /* vm_entry start */
   u64 ret = 0;
 
@@ -194,6 +198,7 @@ u64 vm_entry(u64 *args, u8 *enc_bc, u32 bc_len, u8 xor_key) {
   vm->map_count = 0;
   vm->oc_key = 0;
   vm->reverse = 0;
+  vm->slide = slide;
 
   /* Parse trailer (same format as ARM64) */
   if (bc_len >= 21) {

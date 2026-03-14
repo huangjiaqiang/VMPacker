@@ -40,7 +40,7 @@ SO_ARM64      = $(BUILD_DIR)/libvmptest_arm64.so
 SO_PROTECTED  = $(BUILD_DIR)/libvmptest_protected
 APP_SO_ARM32  = $(BUILD_DIR)/simple_app_so_arm32
 APP_SO_ARM64  = $(BUILD_DIR)/simple_app_so_arm64
-SO_FUNCS      = vmp_compute,vmp_verify_key
+SO_FUNCS      = vmp_compute,vmp_verify_key,vmp_md5_hex,vmp_get_process_name
 
 .PHONY: arm64 arm32 protect protect32 run run32 clean \
         so32 so64 so32-protect so64-protect so32-run so64-run
