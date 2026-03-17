@@ -36,7 +36,7 @@ STUB_ELF   = $(BUILD_DIR)/stub/vm_interp.elf
 STUB_BIN   = $(CMD_DIR)/vm_interp.bin
 
 # ------ VM 解释器 blob (ARM32) ------
-STUB32_DIR   = $(STUB_DIR)/arm32
+STUB32_DIR   = stub/arm32
 STUB32_SRC   = $(STUB32_DIR)/vm_interp_arm32.c
 STUB32_ASM   = $(STUB32_DIR)/token_table_va.S
 STUB32_LDS   = $(STUB32_DIR)/vm_interp_arm32.lds

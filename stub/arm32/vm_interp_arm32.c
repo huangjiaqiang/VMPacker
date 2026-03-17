@@ -17,24 +17,24 @@
  */
 
 #include "vm_types_arm32.h"
-#include "../vm_decode.h"
-#include "../vm_opcodes.h"
+#include "vm_decode.h"
+#include "vm_opcodes.h"
 
 /* Include instruction handlers (shared with ARM64 — they operate on vm_ctx_t) */
-#include "../vm_handlers/h_alu.h"
-#include "../vm_handlers/h_branch.h"
-#include "../vm_handlers/h_cmp.h"
-#include "../vm_handlers/h_mem.h"
-#include "../vm_handlers/h_mov.h"
-#include "../vm_handlers/h_stack.h"
-#include "../vm_handlers/h_stack_ops.h"
-#include "../vm_handlers/h_system.h"
+#include "vm_handlers/h_alu.h"
+#include "vm_handlers/h_branch.h"
+#include "vm_handlers/h_cmp.h"
+#include "vm_handlers/h_mem.h"
+#include "vm_handlers/h_mov.h"
+#include "vm_handlers/h_stack.h"
+#include "vm_handlers/h_stack_ops.h"
+#include "vm_handlers/h_system.h"
 
 #ifdef VM_INDIRECT_DISPATCH
-#include "../vm_dispatch.h"
+#include "vm_dispatch.h"
 #endif
 
-#include "../vm_token.h"
+#include "vm_token.h"
 
 /* ARM32 packer writes 8 bytes/entry (bc_off u32 + bc_len u32), not 16 like token_desc_t */
 typedef struct { u32 bc_off; u32 bc_len; } token_desc_arm32_t;
@@ -153,7 +153,7 @@ u64 vm_entry(u64 *args, u8 *enc_bc, u32 bc_len, u8 xor_key, u64 slide) {
   u32 alloc_size = (bc_len + 4095u) & ~4095u;
   u8 *bc_buf = (u8 *)sys_mmap_arm32(alloc_size);
   DBG('7'); /* after bc mmap */
-  if ((long)bc_buf < 0)
+  if ((unsigned long)bc_buf >= 0xFFFFF000u)
     return 0;
 
   /* XOR decrypt (4-byte wide for ARM32) */
@@ -174,7 +174,7 @@ u64 vm_entry(u64 *args, u8 *enc_bc, u32 bc_len, u8 xor_key, u64 slide) {
   u32 ctx_alloc = (sizeof(vm_ctx_t) + 4095u) & ~4095u;
   vm_ctx_t *vm = (vm_ctx_t *)sys_mmap_arm32(ctx_alloc);
   DBG('8'); /* after ctx mmap */
-  if ((long)vm < 0) {
+  if ((unsigned long)vm >= 0xFFFFF000u) {
     sys_munmap_arm32(bc_buf, alloc_size);
     return 0;
   }

@@ -8,7 +8,7 @@
 #ifndef VM_TYPES_ARM32_H
 #define VM_TYPES_ARM32_H
 
-#include "../vm_types.h"
+#include "vm_types.h"
 
 /* ARM32 native function pointer: AAPCS uses R0-R3 for args */
 typedef u32 (*native_fn_arm32_t)(u32, u32, u32, u32);
