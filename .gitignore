@@ -1,3 +1,7 @@
 scripts/toolchains/
 build/
 .idea/
+test/android/app/.cxx/
+test/android/app/build/
+test/android/local.properties
+test/android/.gradle/
