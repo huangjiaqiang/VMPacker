@@ -88,24 +88,14 @@ $(STUB_ELF): $(STUB_O) $(STUB_LDS)
 
 $(STUB_BIN): $(STUB_ELF) | $(BUILD_DIR)
 	$(OBJCOPY) -O binary $< $(BUILD_DIR)/vm_interp_raw.bin
-	@powershell -Command "\
-		$$nmOut = & '$(CROSS)nm' '$<';\
-		$$l1 = $$nmOut | Select-String '\bvm_entry$$';\
-		$$l2 = $$nmOut | Select-String '\bvm_entry_token$$';\
-		$$l3 = $$nmOut | Select-String '\b_token_table_va$$';\
-		if (!$$l1) { Write-Error 'vm_entry not found'; exit 1 };\
-		if (!$$l2) { Write-Error 'vm_entry_token not found'; exit 1 };\
-		if (!$$l3) { Write-Error '_token_table_va not found'; exit 1 };\
-		$$off1 = [Convert]::ToUInt64($$l1.ToString().Split(' ')[0], 16);\
-		$$off2 = [Convert]::ToUInt64($$l2.ToString().Split(' ')[0], 16);\
-		$$off3 = [Convert]::ToUInt64($$l3.ToString().Split(' ')[0], 16);\
-		$$hdr = [BitConverter]::GetBytes([UInt64]$$off1) + [BitConverter]::GetBytes([UInt64]$$off2) + [BitConverter]::GetBytes([UInt64]$$off3);\
-		$$raw = [IO.File]::ReadAllBytes('$(BUILD_DIR)/vm_interp_raw.bin');\
-		$$blob = $$hdr + $$raw;\
-		[IO.File]::WriteAllBytes('$(STUB_BIN)', $$blob);\
-		Write-Host ('[+] vm_interp.bin: ' + $$blob.Length + ' bytes (vm_entry=0x' + $$off1.ToString('X') + ' vm_entry_token=0x' + $$off2.ToString('X') + ' _token_table_va=0x' + $$off3.ToString('X') + ')')\
-	"
-	@copy /Y "$(subst /,\,$(STUB_BIN))" "$(subst /,\,$(BUILD_DIR))\vm_interp.bin" > nul
+	@if command -v powershell >/dev/null 2>&1; then \
+		powershell -Command "$$nmOut = & '$(CROSS)nm' '$<'; $$l1 = $$nmOut | Select-String '\bvm_entry$$'; $$l2 = $$nmOut | Select-String '\bvm_entry_token$$'; $$l3 = $$nmOut | Select-String '\b_token_table_va$$'; if (!$$l1) { Write-Error 'vm_entry not found'; exit 1 }; if (!$$l2) { Write-Error 'vm_entry_token not found'; exit 1 }; if (!$$l3) { Write-Error '_token_table_va not found'; exit 1 }; $$off1 = [Convert]::ToUInt64($$l1.ToString().Split(' ')[0], 16); $$off2 = [Convert]::ToUInt64($$l2.ToString().Split(' ')[0], 16); $$off3 = [Convert]::ToUInt64($$l3.ToString().Split(' ')[0], 16); $$hdr = [BitConverter]::GetBytes([UInt64]$$off1) + [BitConverter]::GetBytes([UInt64]$$off2) + [BitConverter]::GetBytes([UInt64]$$off3); $$raw = [IO.File]::ReadAllBytes('$(BUILD_DIR)/vm_interp_raw.bin'); $$blob = $$hdr + $$raw; [IO.File]::WriteAllBytes('$(STUB_BIN)', $$blob); Write-Host ('[+] vm_interp.bin: ' + $$blob.Length + ' bytes (vm_entry=0x' + $$off1.ToString('X') + ' vm_entry_token=0x' + $$off2.ToString('X') + ' _token_table_va=0x' + $$off3.ToString('X') + ')')"; \
+		copy /Y "$(subst /,\,$(STUB_BIN))" "$(subst /,\,$(BUILD_DIR))\vm_interp.bin" > nul; \
+	else \
+		chmod +x scripts/build_stub64_unix.sh 2>/dev/null; \
+		./scripts/build_stub64_unix.sh '$<' '$(BUILD_DIR)/vm_interp_raw.bin' '$(STUB_BIN)' '$(CROSS)nm'; \
+	fi
+	@cp -f $(STUB_BIN) $(BUILD_DIR)/vm_interp.bin 2>/dev/null || true
 
 # ------ VM 解释器 blob (ARM32) ------
 # stub32-debug: 带 VM_DEBUG，输出字符 1-9 到 stderr 追踪执行路径

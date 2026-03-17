@@ -74,7 +74,8 @@ static inline void sys_munmap(void *addr, unsigned long size) {
  * 返回: R[0] (模拟 X0 返回值)
  */
 __attribute__((section(".text.entry"))) u64 vm_entry(u64 *args, u8 *enc_bc,
-                                                     u32 bc_len, u8 xor_key);
+                                                     u32 bc_len, u8 xor_key,
+                                                     u64 slide);
 
 /* ================================================================
  * Token 化入口 (条件编译)
@@ -91,6 +92,9 @@ __attribute__((section(".text.entry"))) u64 vm_entry(u64 *args, u8 *enc_bc,
 
 /* Packer 在 payload 中 patch 此变量为 token 描述符表的 VA */
 __attribute__((section(".data.entry"), used)) volatile u64 _token_table_va = 0;
+/* Packer patches this with the link-time VA of _token_table_va,
+ * so the stub can compute ASLR slide = runtime_self_va - link_time_self_va */
+__attribute__((section(".data.entry"), used)) volatile u64 _link_time_self_va = 0;
 
 /* 内部 C 函数: 解码 token 并调用 vm_entry */
 __attribute__((noinline, section(".text.entry"))) u64
@@ -107,6 +111,10 @@ vm_entry_token_inner(u64 *args, u32 token) {
   if (__builtin_expect(tbl_off == 0, 0))
     return 0; /* 表未初始化, 安全退出 */
 
+  /* Compute ASLR slide for PIE/ET_DYN */
+  u64 link_time_self = *(volatile u64 *)&_link_time_self_va;
+  u64 slide = (link_time_self != 0) ? (self_va - link_time_self) : 0;
+
   token_desc_t *table = (token_desc_t *)(self_va + tbl_off);
   /* bc_off 也是相对于 _token_table_va 的偏移 */
   u8 *enc_bc = (u8 *)(self_va + table[func_id].bc_off);
@@ -115,7 +123,7 @@ vm_entry_token_inner(u64 *args, u32 token) {
   if (__builtin_expect(enc_bc == (u8 *)self_va || bc_len == 0, 0))
     return 0; /* 无效条目, 安全退出 */
 
-  return vm_entry(args, enc_bc, bc_len, xor_key);
+  return vm_entry(args, enc_bc, bc_len, xor_key, slide);
 }
 
 /* Naked 汇编入口: 保存调用方寄存器, 调用 C 内部函数 */
@@ -142,7 +150,8 @@ __attribute__((naked, section(".text.entry"), used)) void vm_entry_token(void) {
 
 /* ---- vm_entry 实现 ---- */
 __attribute__((section(".text.entry"))) u64 vm_entry(u64 *args, u8 *enc_bc,
-                                                     u32 bc_len, u8 xor_key) {
+                                                     u32 bc_len, u8 xor_key,
+                                                     u64 slide) {
   u64 ret = 0;
 
   /* ---- 1. 动态分配字节码缓冲区 (mmap, 替代栈上 64KB) ---- */
@@ -176,6 +185,7 @@ __attribute__((section(".text.entry"))) u64 vm_entry(u64 *args, u8 *enc_bc,
     return 0;
   }
   vm_ctx_init(vm, args, bc_buf, bc_len);
+  vm->slide = slide;
 
   /* ---- 2c. 解析字节码尾部 trailer ---- */
   /* 尾部格式 (从末尾向前剥离):

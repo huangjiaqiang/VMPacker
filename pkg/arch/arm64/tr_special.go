@@ -10,6 +10,15 @@ import (
 // 特殊指令翻译 — ADRP / ADR
 // ============================================================
 
+// emitAddrWithSlide emits bytecode that computes (link_time_addr + slide)
+// and stores it to register rd. For ET_EXEC slide=0 so this is a no-op addition.
+func (t *Translator) emitAddrWithSlide(rd byte, addr uint64) {
+	t.sPushImm64(addr)
+	t.emit(vm.OpSLoadSlide)
+	t.emit(vm.OpSAdd)
+	t.emit(vm.OpSVstore, rd)
+}
+
 func (t *Translator) trADRP(instructions []vm.Instruction, idx int) (int, error) {
 	inst := instructions[idx]
 	rd, err := t.mapReg(inst.Rd)
@@ -25,14 +34,12 @@ func (t *Translator) trADRP(instructions []vm.Instruction, idx int) (int, error)
 		next := instructions[idx+1]
 		if Op(next.Op) == ADD_IMM && next.Rd == inst.Rd && next.Rn == inst.Rd {
 			finalAddr := adrpResult + uint64(next.Imm)
-			t.emit(vm.OpMovImm, rd)
-			t.emitU64(finalAddr)
+			t.emitAddrWithSlide(rd, finalAddr)
 			return 1, nil
 		}
 	}
 
-	t.emit(vm.OpMovImm, rd)
-	t.emitU64(adrpResult)
+	t.emitAddrWithSlide(rd, adrpResult)
 	return 0, nil
 }
 
@@ -43,8 +50,7 @@ func (t *Translator) trADR(inst vm.Instruction) (int, error) {
 	}
 	pc := t.funcAddr + uint64(inst.Offset)
 	addr := pc + uint64(inst.Imm)
-	t.emit(vm.OpMovImm, rd)
-	t.emitU64(addr)
+	t.emitAddrWithSlide(rd, addr)
 	return 0, nil
 }
 

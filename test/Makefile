@@ -33,6 +33,10 @@ VMPACKER  = go run ../cmd/vmpacker/
 # -fno-lto 避免 macOS 上 LTO 插件代码签名导致链接失败
 CFLAGS = -O1 -fno-inline-functions -fno-lto
 
+# ARM64 SO 额外加 -mgeneral-regs-only 避免编译器对 memset/memcpy 生成
+# NEON/SIMD 指令 (VMPacker 尚不支持 Advanced SIMD)
+SO_CFLAGS_ARM64 = $(CFLAGS) -mgeneral-regs-only
+
 # ---------- 共享库相关 ----------
 SO_SRC        = libvmptest.c
 SO_ARM32      = $(BUILD_DIR)/libvmptest_arm32.so
@@ -123,7 +127,7 @@ so32-run: so32 so32-protect
 # --- ARM64 ---
 so64: $(SO_ARM64) $(APP_SO_ARM64)
 $(SO_ARM64): $(SO_SRC) libvmptest.h | $(BUILD_DIR)
-	$(CC_ARM64) -shared -fPIC $(CFLAGS) -o $@ $<
+	$(CC_ARM64) -shared -fPIC $(SO_CFLAGS_ARM64) -o $@ $<
 	@echo "[+] Built shared lib: $@"
 
 $(APP_SO_ARM64): $(SRC) $(SO_ARM64) libvmptest.h | $(BUILD_DIR)
@@ -142,13 +146,13 @@ so64-run: so64 so64-protect
 	@echo "[*] 1/2 Running with UNPROTECTED .so ..."
 	docker run --rm --platform linux/arm64 \
 	  -v $(CURDIR)/$(BUILD_DIR):/test -w /test \
-	  arm64v8/ubuntu:20.04 \
+	  ubuntu:22.04 \
 	  /bin/sh -c 'LD_LIBRARY_PATH=/test /test/simple_app_so_arm64'
 	@echo ""
 	@echo "[*] 2/2 Running with PROTECTED .so ..."
 	docker run --rm --platform linux/arm64 \
 	  -v $(CURDIR)/$(BUILD_DIR):/test -w /test \
-	  arm64v8/ubuntu:20.04 \
+	  ubuntu:22.04 \
 	  /bin/sh -c 'mkdir -p /tmp/vmp && cp /test/libvmptest_protected_arm64.so /tmp/vmp/libvmptest_arm64.so && cp /test/simple_app_so_arm64 /tmp/vmp/ && LD_LIBRARY_PATH=/tmp/vmp /tmp/vmp/simple_app_so_arm64'
 
 # ============================================================
