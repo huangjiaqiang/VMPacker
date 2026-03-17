@@ -80,6 +80,14 @@ func (t *Translator) trStackAluReg(inst vm.Instruction, sOp byte) error {
 		t.pushRegOrZero(inst.Rm, rm)
 	}
 
+	if sOp == vm.OpSRor {
+		if inst.SF {
+			t.sPushImm32(64)
+		} else {
+			t.sPushImm32(32)
+		}
+	}
+
 	t.emit(sOp) // 二元操作
 
 	if !inst.SF {
@@ -777,6 +785,7 @@ func (t *Translator) emitShiftOnStack(shiftType int, amount uint32, sf bool) {
 			}
 		} else {
 			t.sPushImm32(amount)
+			t.sPushImm32(64)
 			t.emit(vm.OpSRor)
 		}
 	}
@@ -1700,6 +1709,7 @@ func (t *Translator) trStackEXTR(inst vm.Instruction) error {
 		// ROR alias: 栈模式
 		t.sVload(rn)
 		t.sPushImm32(lsb)
+		t.sPushImm32(regSize)
 		t.emit(vm.OpSRor)
 	} else {
 		// General EXTR: (Rm >> lsb) | (Rn << (regSize-lsb))
@@ -1765,9 +1775,9 @@ func (t *Translator) trStackUBFM(inst vm.Instruction) error {
 		t.sPushImm(0xFFFF)
 		t.emit(vm.OpSAnd)
 	default:
-		width := imms + 1
 		if imms >= immr {
 			// UBFX: (Rn >> immr) & mask
+			width := imms - immr + 1
 			t.sVload(rn)
 			t.sPushImm32(immr)
 			t.emit(vm.OpSShr)
@@ -1776,6 +1786,7 @@ func (t *Translator) trStackUBFM(inst vm.Instruction) error {
 			t.emit(vm.OpSAnd)
 		} else {
 			// UBFIZ: (Rn & mask) << shift
+			width := imms + 1
 			shift := regSize - immr
 			mask := uint64((1 << width) - 1)
 			t.sVload(rn)

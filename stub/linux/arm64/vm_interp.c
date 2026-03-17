@@ -1,5 +1,5 @@
 /*
- * vm_interp_clean.c — 模块化 VM 解释器 (ARM64 PIC blob)
+ * vm_interp.c — 模块化 VM 解释器 (Linux/ARM64 PIC blob)
  *
  * 架构:
  *   vm_types.h       → 类型 + vm_ctx_t 结构体
@@ -9,8 +9,7 @@
  *
  * 编译 (交叉编译为 blob):
  *   aarch64-linux-gnu-gcc -c -Os -mcmodel=tiny -fno-stack-protector \
- *     -fno-builtin -nostdlib -march=armv8-a vm_interp_clean.c -o
- * vm_interp_clean.o
+ *     -fno-builtin -nostdlib -march=armv8-a vm_interp.c -o vm_interp.o
  */
 
 /* ---- 基础设施 ---- */
